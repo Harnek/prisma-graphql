@@ -2,162 +2,120 @@ import uuidv4 from 'uuid/v4'
 import { type } from 'os';
 
 const Mutation = {
-    createUser(parent, args, { prisma }, info) {
-        const emailTaken = prisma.users.some((user) => user.email === args.data.email)
+    async createUser(parent, args, { prisma }, info) {
+        const emailTaken = await prisma.$exists.user({email: args.data.email})
 
         if (emailTaken){
             throw Error('User already present with email');
         }
         
-        const user = {
-            id: uuidv4(),
-            ...args.data
-        }
-
-        prisma.users.push(user)
-        return user
+        return await prisma.createUser(args.data)
     },
-    updateUser(parent, args, { prisma }, info) {
-        const {id, data} = args
-        const user = prisma.users.find((user) => user.id === id)
-        console.log(user)
+    // updateUser(parent, args, { prisma }, info) {
+    //     const {id, data} = args
+    //     const user = prisma.users.find((user) => user.id === id)
+    //     console.log(user)
 
-        if (!user) {
-            throw Error('User not found')
+    //     if (!user) {
+    //         throw Error('User not found')
+    //     }
+
+    //     if (typeof data.email === 'string') {
+    //         const emailTaken = prisma.users.some((user) => user.email === data.email)
+    //         if (emailTaken) {
+    //             throw Error('Email already taken')
+    //         }
+
+    //         user.email = data.email
+    //     }
+
+    //     if (typeof data.name === 'string') {
+    //         user.name = data.name
+    //     }
+
+    //     if (typeof data.age !== 'undefined') {
+    //         user.age = data.age
+    //     }
+
+    //     return user
+    // },
+    async deleteUser(parent, args, { prisma }, info) {
+        //TODO : prisma-client limitations -> Cant delete cascading relations
+        //Wait for next version for implementation
+        try {
+            return await prisma.deleteUser({id: args.id})
         }
-
-        if (typeof data.email === 'string') {
-            const emailTaken = prisma.users.some((user) => user.email === data.email)
-            if (emailTaken) {
-                throw Error('Email already taken')
-            }
-
-            user.email = data.email
+        catch(error) {
+            throw Error(error.message)
+            // throw Error('Something went wrong. Cant delete User ')
         }
-
-        if (typeof data.name === 'string') {
-            user.name = data.name
-        }
-
-        if (typeof data.age !== 'undefined') {
-            user.age = data.age
-        }
-
-        return user
     },
-    deleteUser(parent, args, { prisma }, info) {
-        const userIndex = prisma.users.findIndex((user) => user.id === args.id)
-
-        if (userIndex === -1){
-            throw Error('User not found')
-        }
-
-        const deletedUsers = prisma.users.splice(userIndex, 1)
-
-        prisma.posts = prisma.posts.filter((post) => {
-            const match = post.author === args.id
-
-            if (match) {
-                prisma.comments = prisma.comments.filter((comment) => comment.post !== post.id)
-            }
-
-            return !match
-        })
-
-        prisma.comments = prisma.comments.filter((comment) => comment.author !== args.id)
-
-        return deletedUsers[0]
-    },
-    createPost(parent, args, { prisma, pubsub }, info) {
-        const userExist = prisma.users.some((user) => user.id === args.data.author)
+    async createPost(parent, args, { prisma, pubsub }, info) {
+        const userExist = await prisma.$exists.user({id: args.data.author})
 
         if (!userExist){
             throw Error('User does not exist');
         }
-        
-        const post = {
-            id: uuidv4(),
-            ...args.data
+
+        const data = {
+            title: args.data.title,
+            body: args.data.body,
+            published: args.data.published,
+            author: {
+                connect: {
+                    id: args.data.author
+                }
+            },
         }
 
-        prisma.posts.push(post)
+        const post = await prisma.createPost(data)
 
-        if (post.published === true){
-            pubsub.publish('post', { 
-                post: {
-                    mutation: 'CREATED',
-                    data: post
-                }
-            })
+        return post
+    },
+    async deletePost(parent, args, { prisma, pubsub }, info) {
+        //TODO: Does not work.. See deleteUser()
+        try {
+            const post = await prisma.deletePost({id: args.id})
+        }
+        catch(error) {
+            throw Error(error.message)
         }
 
         return post
     },
-    deletePost(parent, args, { prisma, pubsub }, info) {
-        const postIndex = prisma.posts.findIndex((post) => post.id === args.id)
-
-        if (postIndex === -1){
-            throw Error('Post not found')
-        }
-
-        const [post] = prisma.posts.splice(postIndex, 1)
-
-        prisma.comments = prisma.comments.filter((comment) => {
-            return comment.post !== args.id
-        })
-
-        if (post.published === true){
-            pubsub.publish('post', { 
-                post: {
-                    mutation: 'DELETED',
-                    data: post
-                }
-            })
-        }
-
-        return post
-    },
-    createComment(parent, args, { prisma, pubsub }, info) {
-        const userExist = prisma.users.some((user) => user.id === args.data.author)
-        const postExist = prisma.posts.some((post) => post.id === args.data.post)
+    async createComment(parent, args, { prisma, pubsub }, info) {
+        const userExist = await prisma.$exists.user({id: args.data.author})
+        const postExist = await prisma.$exists.post({id: args.data.post})
 
         if (!userExist || !postExist){
             throw Error('User or Post does not Exist');
         }
-        
-        const comment = {
-            id: uuidv4(),
-            ...args.data
+
+        const data = {
+            text: args.data.text,
+            author: {
+                connect: {
+                    id: args.data.author
+                }
+            },
+            post: {
+                connect: {
+                    id: args.data.post
+                }
+            }
         }
 
-        prisma.comments.push(comment)
-
-        pubsub.publish(`comment ${args.data.post}`, { 
-            comment: {
-                mutation: 'CREATED',
-                data: comment
-            }
-        })
+        const comment = await prisma.createComment(data)
 
         return comment
     },
-    deleteComment(parent, args, { prisma, pubsub }, info) {
-        const commentIndex = prisma.comments.findIndex((comment) => comment.id === args.id)
-
-        if (commentIndex === -1){
-            throw Error('Comment not found')
+    async deleteComment(parent, args, { prisma, pubsub }, info) {
+        try {
+            return await prisma.deleteComment({id: args.id})
         }
-
-        const [deletedComment] = prisma.comments.splice(commentIndex, 1)
-
-        pubsub.publish(`comment ${deletedComment.post}`, {
-            comment: {
-                mutation: 'DELETED',
-                data: deletedComment
-            }
-        })
-
-        return deletedComment
+        catch(error) {
+            throw Error(error.message)
+        }
     }
 
 }
